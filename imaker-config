@@ -1,0 +1,259 @@
+#!/bin/sh
+# Part of imaker-config (https://github.com/Ardunux/Ardunux_iMakerConfig)
+#
+# This file come from http://github.com/asb/raspi-config
+#
+# See LICENSE file for copyright and license details
+
+BACKTITLE="Ardunux iMaker Software Configuration Tool (imaker-config)"
+USER_NAME="imaker"
+DIALOG=${DIALOG=dialog}
+ASK_TO_REBOOT=0
+SUDO=""
+
+if [ $(id -u) -ne 0 ]; then
+	SUDO="sudo"
+fi
+
+get_init_sys() {
+  if command -v systemctl > /dev/null && systemctl | grep -q '\-\.mount'; then
+    SYSTEMD=1
+  else
+    SYSTEMD=0
+  fi
+}
+
+calc_wt_size() {
+  # NOTE: it's tempting to redirect stderr to /dev/null, so supress error
+  # output from tput. However in this case, tput detects neither stdout or
+  # stderr is a tty and so only gives default 80, 24 values
+  WT_HEIGHT=17
+  WT_WIDTH=$(tput cols)
+
+  if [ -z "$WT_WIDTH" ] || [ "$WT_WIDTH" -lt 60 ]; then
+    WT_WIDTH=80
+  fi
+  if [ "$WT_WIDTH" -gt 120 ]; then
+    WT_WIDTH=120
+  fi
+  WT_MENU_HEIGHT=$(($WT_HEIGHT-7))
+}
+
+do_about() {
+  ${DIALOG} --backtitle "$BACKTITLE" \
+--title "About imaker-config" --clear --msgbox "\
+This tool provides a straight-forward way of doing initial
+configuration of the Ardunux iMaker. Although it can be run
+at any time, some of the options may have difficulties if
+you have heavily customised your installation.\
+" 20 70
+}
+
+do_change_pass() {
+  ${DIALOG} --backtitle "$BACKTITLE" \
+--msgbox "You will now be asked to enter a new password for the $USER_NAME user" 20 60
+  passwd $USER_NAME &&
+  ${DIALOG} --msgbox "Password changed successfully" 20 60
+}
+
+find_locale() {
+        lines=`cat /tmp/localeout.txt`
+
+        for choice in $lines
+        do
+                if [ "$1" == "$choice" ]; then
+                        return 0
+                fi
+        done
+        return 1
+}
+
+do_change_locale() {
+        echo "Please wait for reading locale.gen file to process."
+
+        while IFS= read line
+        do
+                l=`echo $line | cut -d' ' -f1`
+                if [ ${#l} -lt "2" ]; then
+                        echo $line >> /tmp/localehead.txt
+                else
+                        echo $line >> /tmp/localebody.txt
+                fi
+        done < /etc/locale.gen
+
+        while IFS= read read_locale read_char
+        do
+                if [ ${read_locale:0:1} == "#" ]; then
+                        locale=${read_locale:1}
+                        echo "$locale $read_char off" >> /tmp/locale.txt
+                else
+                        echo "$read_locale $read_char on" >> /tmp/locale.txt
+                fi
+        done < /tmp/localebody.txt
+
+        ${DIALOG} --backtitle "$BACKTITLE" \
+		--title "Configuring locales" \
+		--checklist "Locales to be generated:" 20 60 15 $(cat /tmp/locale.txt) 2>/tmp/localeout.txt
+
+	if [ $? -eq 0 ]
+	then
+		echo "Please wait for writing file"
+
+		IFS=' '
+		while read read_locale read_char read_flag
+		do
+			find_locale $read_locale && echo "$read_locale $read_char" >> /tmp/localehead.txt || echo "#$read_locale $read_char" >> /tmp/localehead.txt
+		done < /tmp/locale.txt
+
+		rm -f /tmp/locale.txt
+		rm -f /tmp/localebody.txt
+
+		mv -f /etc/locale.gen /tmp/locale.gen
+		mv -f /tmp/localehead.txt /etc/locale.gen
+
+		locale-gen
+
+		LOCALE_CONF="/etc/locale.conf"
+		if [ -e $LOCALE_CONF ]; then
+			CURRENT_LOCALE=`cat /etc/locale.conf | cut -d'=' -f2`
+		else
+			CURRENT_LOCALE=""
+		fi
+
+		n=1
+
+		if [ -z $CURRENT_LOCALE ]; then
+			choicelist="$n None on"
+		else
+			choicelist="$n None off"
+		fi
+
+		choices=`cat /tmp/localeout.txt`
+		rm -f /tmp/localeout.txt
+		IFS=' '
+		for choice in $choices
+		do
+			n=$[n+1]
+			if [ "$choice" == "$CURRENT_LOCALE" ]; then
+				choicelist="$choicelist $n $choice on"
+			else
+				choicelist="$choicelist $n $choice off"
+			fi
+		done
+
+		array=(None $choices)
+		var=$(${DIALOG} --backtitle "$BACKTITLE" \
+		--title "Configuring locales" \
+		--radiolist "Default locale for the system environment:" 30 60 $n \
+		$choicelist 3>&1 1>&2 2>&3)
+
+		RET=$?
+		if [ $RET -eq 0 ]; then
+			NEW_LOCALE=${array[var-1]}
+			if [ "$NEW_LOCALE" == "None" ]; then
+				echo LANG=""> /etc/locale.conf
+			else
+				echo LANG=$NEW_LOCALE > /etc/locale.conf
+			fi
+
+			ASK_TO_REBOOT=1
+		fi
+	fi
+}
+
+do_change_timezone() {
+  TZ=`tzselect`
+  timedatectl set-timezone $TZ
+  ${DIALOG} --backtitle "$BACKTITLE" \
+	--title "Change Timezone" \
+	--msgbox "Your timezone is $TZ" 20 60
+}
+
+do_change_hostname() {
+  ${DIALOG} --backtitle "$BACKTITLE" \
+	--title "Change Hostname" \
+--msgbox "\
+Please note: RFCs mandate that a hostname's labels \
+may contain only the ASCII letters 'a' through 'z' (case-insensitive),
+the digits '0' through '9', and the hyphen.
+Hostname labels cannot begin or end with a hyphen.
+No other symbols, punctuation characters, or blank spaces are permitted.\
+" 20 70
+
+  CURRENT_HOSTNAME=`cat /etc/hostname | tr -d " \t\n\r"`
+  NEW_HOSTNAME=$(${DIALOG} --inputbox "Please enter a hostname" 20 60 "$CURRENT_HOSTNAME" 3>&1 1>&2 2>&3)
+  if [ $? -eq 0 ]; then
+    hostnamectl set-hostname $NEW_HOSTNAME
+    ASK_TO_REBOOT=1
+  fi
+}
+
+disable_imaker_config_at_boot() {
+	if [ -e /etc/profile.d/imaker-config.sh ]; then
+		rm -f /etc/profile.d/imaker-config.sh
+		telinit q
+	fi
+}
+
+do_update() {
+	${DIALOG} --backtitle "$BACKTITLE" --title "Update System & packages" --yesno "Would you like to update now?" 20 60
+	if [ $? -eq 0 ]; then # yes
+		pacman -Syu &&
+		sleep 5 &&
+		ASK_TO_REBOOT=1
+	fi
+}
+
+do_finish() {
+  disable_imaker_config_at_boot
+  if [ $ASK_TO_REBOOT -eq 1 ]; then
+    ${DIALOG} --yesno "Would you like to reboot now?" 20 60
+    if [ $? -eq 0 ]; then # yes
+      sync
+      reboot
+    fi
+  fi
+  clear
+  exit 0
+}
+
+# Everything else needs to be run as root
+if [ $(id -u) -ne 0 ]; then
+  printf "Script must be run as root. Try 'sudo imaker-config'\n"
+  exit 1
+fi
+
+#
+# Interactive use loop
+#
+calc_wt_size
+
+while true; do
+  FUN=$(${DIALOG} --backtitle "$BACKTITLE" \
+--title "Main Menu" \
+--cancel-label "Finish" --ok-label "Select" \
+--menu "Setup Options" $WT_HEIGHT $WT_WIDTH $WT_MENU_HEIGHT \
+"1 Change Hostname" ": Change the visible name for this iMaker on a network" \
+"2 Change User Password" ": Change password for the default user (imaker)" \
+"3 Set Locale" ": Set up language and regional settings" \
+"4 Set Timezone" ": Set up timezone to match your location" \
+"5 Update" ": Update system & packages to the latest version" \
+"6 About imaker-config" ": Information about this configuration tool" \
+    3>&1 1>&2 2>&3)
+  RET=$?
+  if [ $RET -eq 1 ]; then
+    do_finish
+  elif [ $RET -eq 0 ]; then
+    case "$FUN" in
+      1\ *) do_change_hostname ;;
+      2\ *) do_change_pass ;;
+      3\ *) do_change_locale ;;
+      4\ *) do_change_timezone ;;
+      5\ *) do_update ;;
+      6\ *) do_about ;;
+      *) ${DIALOG} --msgbox "Programmer error: unrecognized option" 20 60 ;;
+    esac || ${DIALOG} --msgbox "There was an error running option $FUN" 20 60
+  else
+    exit 1
+  fi
+done
