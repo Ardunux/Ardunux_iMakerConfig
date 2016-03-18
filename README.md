@@ -12,16 +12,52 @@ Included functions in imaker-config:
 * Update installed programs
 
 ## Installation
+
+### 1. go to temporary working directory
 ```
 cd ~/Tmp
+```
+
+### 2. download files to be installed
+
+archive files:
+```
 wget https://github.com/Ardunux/Ardunux_iMakerConfig/archive/master.zip
 unzip master.zip
 cd Ardunux_iMakerConfig-master
+```
+
+or
+
+clone files:
+```
+git clone https://github.com/Ardunux/Ardunux_iMakerConfig.git
+cd Ardunux_iMakerConfig
+```
+
+### 3. install
+
+```
 /bin/sh install.sh
+```
+
+### 4. delete downloaded files
+
+archive files:
+```
 cd ..
 rm -f master.zip
 rm -rf Ardunux_iMakerConfig-master
 ```
+
+or
+
+clone files:
+```
+cd ..
+rm -rf Ardunux_iMakerConfig
+```
+
 
 ### Run
 ```
