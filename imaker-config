@@ -68,8 +68,25 @@ find_locale() {
         return 1
 }
 
+delete_locale_temp_files() {
+        if [ -e /tmp/localehead.txt ]; then
+                rm -f /tmp/localehead.txt
+        fi
+        if [ -e /tmp/localebody.txt ]; then
+                rm -f /tmp/localebody.txt
+        fi
+        if [ -e /tmp/locale.txt ]; then
+                rm -f /tmp/locale.txt
+        fi
+        if [ -e /tmp/localeout.txt ]; then
+                rm -f /tmp/localeout.txt
+        fi
+}
+
 do_change_locale() {
         echo "Please wait for reading locale.gen file to process."
+
+        delete_locale_temp_files
 
         while IFS= read line
         do
@@ -104,9 +121,6 @@ do_change_locale() {
 		do
 			find_locale $read_locale && echo "$read_locale $read_char" >> /tmp/localehead.txt || echo "#$read_locale $read_char" >> /tmp/localehead.txt
 		done < /tmp/locale.txt
-
-		rm -f /tmp/locale.txt
-		rm -f /tmp/localebody.txt
 
 		mv -f /etc/locale.gen /tmp/locale.gen
 		mv -f /tmp/localehead.txt /etc/locale.gen
@@ -159,6 +173,8 @@ do_change_locale() {
 			ASK_TO_REBOOT=1
 		fi
 	fi
+
+  delete_locale_temp_files
 }
 
 do_change_timezone() {
